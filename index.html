@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Проверка WebRTC утечек</title>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f7fa;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 25px;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+        
+        .description {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #7f8c8d;
+        }
+        
+        .btn {
+            display: block;
+            width: 200px;
+            margin: 0 auto 30px;
+            padding: 12px 20px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        
+        .btn:hover {
+            background-color: #2980b9;
+        }
+        
+        .btn:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        
+        .results {
+            display: none;
+            margin-top: 20px;
+        }
+        
+        .summary {
+            background-color: #f8f9fa;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin-bottom: 25px;
+            border-radius: 0 5px 5px 0;
+        }
+        
+        .summary h3 {
+            margin-bottom: 10px;
+            color: #2c3e50;
+        }
+        
+        .summary-item {
+            display: flex;
+            margin-bottom: 8px;
+        }
+        
+        .summary-label {
+            font-weight: bold;
+            min-width: 220px;
+            color: #34495e;
+        }
+        
+        .leak-detected {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        
+        .no-leak {
+            color: #27ae60;
+            font-weight: bold;
+        }
+        
+        .sdp-details {
+            margin-top: 30px;
+        }
+        
+        .sdp-details h3 {
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+        
+        .sdp-content {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 500px;
+            overflow-y: auto;
+            font-size: 14px;
+        }
+        
+        .loading {
+            text-align: center;
+            margin: 20px 0;
+            display: none;
+        }
+        
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-radius: 50%;
+            border-top: 4px solid #3498db;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .note {
+            background-color: #fff8e1;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin-top: 25px;
+            border-radius: 0 5px 5px 0;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Проверка WebRTC утечек</h1>
+        <p class="description">Нажмите кнопку "Проверить" для обнаружения возможных утечек через WebRTC соединение</p>
+        
+        <button id="checkBtn" class="btn">Проверить</button>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Идет проверка, пожалуйста подождите...</p>
+        </div>
+        
+        <div class="results" id="results">
+            <div class="summary">
+                <h3>Результаты проверки</h3>
+                <div class="summary-item">
+                    <span class="summary-label">Ваш IPv4:</span>
+                    <span id="ipv4-result">Не определен</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">Ваш IPv6:</span>
+                    <span id="ipv6-result">Не определен</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">Поддержка RTCPeerConnection:</span>
+                    <span id="peerconnection-result">Проверка...</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">Поддержка RTCDataChannel:</span>
+                    <span id="datachannel-result">Проверка...</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">WebRTC утечки:</span>
+                    <span id="leak-result">Проверка...</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">Локальный IP:</span>
+                    <span id="local-ip">Не определен</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">Публичный IP:</span>
+                    <span id="public-ip">Не определен</span>
+                </div>
+            </div>
+            
+            <div class="sdp-details">
+                <h3>Детали SDP</h3>
+                <div class="sdp-content" id="sdp-content"></div>
+            </div>
+        </div>
+        
+        <div class="note">
+            <p><strong>Примечание:</strong> Современные браузеры пытаются маскировать локальные IP-адреса с помощью mDNS (имена вида xxxx.local), чтобы предотвратить утечки. Однако в некоторых случаях реальные IP-адреса все же могут быть обнаружены.</p>
+        </div>
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            $('#checkBtn').click(function() {
+                // Показываем индикатор загрузки
+                $('#loading').show();
+                $('#checkBtn').prop('disabled', true);
+                $('#results').hide();
+                
+                // Проверяем поддержку WebRTC
+                checkWebRTCSupport();
+                
+                // Запускаем проверку на утечки
+                checkWebRTCLeaks();
+            });
+            
+            function checkWebRTCSupport() {
+                // Проверяем поддержку RTCPeerConnection
+                const peerConnectionSupport = !!(
+                    window.RTCPeerConnection || 
+                    window.webkitRTCPeerConnection || 
+                    window.mozRTCPeerConnection
+                );
+                
+                $('#peerconnection-result').text(peerConnectionSupport ? 'Да' : 'Нет');
+                
+                // Проверяем поддержку RTCDataChannel
+                let dataChannelSupport = false;
+                if (peerConnectionSupport) {
+                    try {
+                        const pc = new (window.RTCPeerConnection || window.webkitRTCPeerConnection || window.mozRTCPeerConnection)({iceServers: []});
+                        dataChannelSupport = typeof pc.createDataChannel === 'function';
+                    } catch (e) {
+                        dataChannelSupport = false;
+                    }
+                }
+                
+                $('#datachannel-result').text(dataChannelSupport ? 'Да' : 'Нет');
+            }
+            
+            function checkWebRTCLeaks() {
+                // Получаем IP-адреса через WebRTC
+                getIPAddresses().then(ips => {
+                    // Определяем IPv4, IPv6 и локальные адреса
+                    let ipv4 = '';
+                    let ipv6 = '';
+                    let localIPs = [];
+                    let publicIPs = [];
+                    
+                    ips.forEach(ip => {
+                        if (ip.includes(':')) {
+                            ipv6 = ip;
+                        } else {
+                            ipv4 = ip;
+                        }
+                        
+                        // Проверяем, является ли IP локальным
+                        if (isLocalIP(ip)) {
+                            localIPs.push(ip);
+                        } else {
+                            publicIPs.push(ip);
+                        }
+                    });
+                    
+                    // Обновляем результаты
+                    $('#ipv4-result').text(ipv4 || 'Не обнаружен');
+                    $('#ipv6-result').text(ipv6 || 'Не обнаружен');
+                    
+                    if (localIPs.length > 0) {
+                        $('#local-ip').html(localIPs.join(', '));
+                        $('#leak-result').html('<span class="leak-detected">Да</span>');
+                    } else {
+                        $('#local-ip').text('Не обнаружены');
+                        $('#leak-result').html('<span class="no-leak">Нет</span>');
+                    }
+                    
+                    $('#public-ip').text(publicIPs.length > 0 ? publicIPs.join(', ') : 'Не обнаружен');
+                    
+                    // Получаем SDP информацию
+                    getSDPInfo().then(sdp => {
+                        $('#sdp-content').text(sdp);
+                        
+                        // Скрываем индикатор загрузки и показываем результаты
+                        $('#loading').hide();
+                        $('#results').show();
+                        $('#checkBtn').prop('disabled', false);
+                    }).catch(error => {
+                        $('#sdp-content').text('Не удалось получить SDP информацию: ' + error);
+                        
+                        // Скрываем индикатор загрузки и показываем результаты
+                        $('#loading').hide();
+                        $('#results').show();
+                        $('#checkBtn').prop('disabled', false);
+                    });
+                    
+                }).catch(error => {
+                    $('#ipv4-result').text('Ошибка определения');
+                    $('#ipv6-result').text('Ошибка определения');
+                    $('#leak-result').html('<span class="no-leak">Нет (WebRTC не поддерживается)</span>');
+                    $('#local-ip').text('Не применимо');
+                    $('#public-ip').text('Не применимо');
+                    $('#sdp-content').text('WebRTC не поддерживается или заблокирован в вашем браузере.');
+                    
+                    // Скрываем индикатор загрузки и показываем результаты
+                    $('#loading').hide();
+                    $('#results').show();
+                    $('#checkBtn').prop('disabled', false);
+                });
+            }
+            
+            function getIPAddresses() {
+                return new Promise((resolve, reject) => {
+                    // Проверяем поддержку WebRTC
+                    if (!window.RTCPeerConnection && !window.webkitRTCPeerConnection && !window.mozRTCPeerConnection) {
+                        reject(new Error('WebRTC не поддерживается'));
+                        return;
+                    }
+                    
+                    const rtc = new (window.RTCPeerConnection || window.webkitRTCPeerConnection || window.mozRTCPeerConnection)({iceServers: []});
+                    const ips = [];
+                    
+                    // Обработчик ICE кандидатов
+                    rtc.onicecandidate = function(event) {
+                        if (!event.candidate) {
+                            // Все кандидаты собраны
+                            if (ips.length === 0) {
+                                reject(new Error('Не удалось определить IP-адреса'));
+                            } else {
+                                resolve([...new Set(ips)]); // Убираем дубликаты
+                            }
+                            return;
+                        }
+                        
+                        const candidate = event.candidate.candidate;
+                        if (candidate) {
+                            const match = candidate.match(/([0-9]{1,3}(\.[0-9]{1,3}){3}|[a-f0-9]{1,4}(:[a-f0-9]{1,4}){7})/);
+                            if (match) {
+                                ips.push(match[1]);
+                            }
+                        }
+                    };
+                    
+                    // Создаем пустое соединение данных
+                    rtc.createDataChannel('');
+                    
+                    // Создаем SDP offer
+                    rtc.createOffer()
+                        .then(offer => rtc.setLocalDescription(offer))
+                        .catch(reject);
+                    
+                    // Таймаут на случай, если WebRTC не сработает
+                    setTimeout(() => {
+                        if (ips.length === 0) {
+                            reject(new Error('Таймаут при определении IP-адресов'));
+                        }
+                    }, 5000);
+                });
+            }
+            
+            function getSDPInfo() {
+                return new Promise((resolve, reject) => {
+                    // Проверяем поддержку WebRTC
+                    if (!window.RTCPeerConnection && !window.webkitRTCPeerConnection && !window.mozRTCPeerConnection) {
+                        reject(new Error('WebRTC не поддерживается'));
+                        return;
+                    }
+                    
+                    const rtc = new (window.RTCPeerConnection || window.webkitRTCPeerConnection || window.mozRTCPeerConnection)({iceServers: []});
+                    
+                    // Создаем пустое соединение данных
+                    rtc.createDataChannel('');
+                    
+                    // Создаем SDP offer
+                    rtc.createOffer()
+                        .then(offer => {
+                            rtc.setLocalDescription(offer);
+                            resolve(offer.sdp);
+                        })
+                        .catch(reject);
+                    
+                    // Таймаут
+                    setTimeout(() => {
+                        reject(new Error('Таймаут при получении SDP информации'));
+                    }, 5000);
+                });
+            }
+            
+            function isLocalIP(ip) {
+                // Проверяем, является ли IP адрес локальным
+                if (ip.includes(':')) {
+                    // IPv6 - проверяем на локальные адреса (fc00::/7 - Unique Local Addresses)
+                    if (/^f[c-d][0-9a-f]{2}(::1$|:)/i.test(ip)) {
+                        return true;
+                    }
+                    // fe80::/10 - link-local addresses
+                    if (/^fe[89ab][0-9a-f](::1$|:)/i.test(ip)) {
+                        return true;
+                    }
+                } else {
+                    // IPv4 - проверяем частные диапазоны
+                    const parts = ip.split('.');
+                    if (parts[0] === '10') return true;
+                    if (parts[0] === '172' && parseInt(parts[1]) >= 16 && parseInt(parts[1]) <= 31) return true;
+                    if (parts[0] === '192' && parts[1] === '168') return true;
+                    if (parts[0] === '127') return true; // loopback
+                    if (parts[0] === '169' && parts[1] === '254') return true; // link-local
+                }
+                
+                // mDNS маскировка (современные браузеры)
+                if (ip.endsWith('.local')) {
+                    return true;
+                }
+                
+                return false;
+            }
+        });
+    </script>
+</body>
+</html>
